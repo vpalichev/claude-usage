@@ -1,0 +1,18 @@
+# Build output
+**/bin/
+**/obj/
+
+# Chromium profile (contains session cookies, large, personal)
+profile/
+
+# Logs (runtime data)
+logs/
+*.csv
+
+# Browser-bot (separate repo)
+browser-bot/
+
+# OS / editor
+.vs/
+*.user
+Thumbs.db

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <RootNamespace>Harness</RootNamespace>
+    <AssemblyName>claude-usage</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Domain.fs" />
+    <Compile Include="Parser.fs" />
+    <Compile Include="Csv.fs" />
+    <Compile Include="Progress.fs" />
+    <Compile Include="Chromium.fs" />
+    <Compile Include="Io.fs" />
+    <Compile Include="Panel.fs" />
+    <Compile Include="Scrape.fs" />
+    <Compile Include="Tray.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" Version="1.1.2" />
+  </ItemGroup>
+
+</Project>
