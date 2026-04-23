@@ -150,9 +150,13 @@ let run () =
     let menu = new ContextMenuStrip()
     let showItem    = new ToolStripMenuItem("Show")
     let refreshItem = new ToolStripMenuItem("Refresh")
+    let topMostItem = new ToolStripMenuItem("Always on top")
     let exitItem    = new ToolStripMenuItem("Exit")
+    topMostItem.CheckOnClick <- true
+    topMostItem.CheckedChanged.Add(fun _ -> form.TopMost <- topMostItem.Checked)
     menu.Items.Add(showItem)    |> ignore
     menu.Items.Add(refreshItem) |> ignore
+    menu.Items.Add(topMostItem) |> ignore
     menu.Items.Add(new ToolStripSeparator()) |> ignore
     menu.Items.Add(exitItem)    |> ignore
     tray.ContextMenuStrip <- menu
@@ -282,10 +286,17 @@ let run () =
                 rerender ())
         ) |> ignore
 
-    and scheduleNextAutoRefresh () =
+    and scheduleAutoRefreshIn (intervalMs: int) =
         if not (isNull autoRefreshTimer) then
             autoRefreshTimer.Stop()
             autoRefreshTimer.Dispose()
+        let t = new Timer(Interval = max 1 intervalMs)
+        t.Tick.Add(fun _ -> t.Stop(); refresh ())
+        autoRefreshTimer <- t
+        nextRefreshAt <- Some (DateTime.Now.AddMilliseconds(float intervalMs))
+        t.Start()
+
+    and scheduleNextAutoRefresh () =
         // Exponential inter-arrival: mean 30 min, floor 10 min. Occasional
         // short gaps and long tails make it look organic instead of a uniform
         // ~30-min grid. Interval is ms-precise (includes a random sub-minute
@@ -294,26 +305,20 @@ let run () =
         let floorMs = 10 * 60 * 1000
         let u = max 1e-6 (rng.NextDouble())
         let intervalMs = floorMs + int (-meanMs * log u)
-        let t = new Timer(Interval = intervalMs)
-        t.Tick.Add(fun _ -> t.Stop(); refresh ())
-        autoRefreshTimer <- t
-        nextRefreshAt <- Some (DateTime.Now.AddMilliseconds(float intervalMs))
-        t.Start()
+        scheduleAutoRefreshIn intervalMs
 
     // Clock tick: every minute, re-render the last snapshot so the
-    // "Captured N min ago" label and the 5H triangle advance with
-    // wall-clock time. If the 5H window has rolled over, fire an
-    // immediate scrape — the new window starts fresh with the triangle
-    // near the left.
+    // "Captured N min ago" label, the 5H triangle, and the next-refresh
+    // countdown all advance with wall-clock time. Window rollover is NOT
+    // auto-refreshed here — firing an immediate scrape on every 5H
+    // boundary was creating a 5-hour-on-the-:00 fingerprint on top of the
+    // otherwise-randomized inter-arrivals. The panel now shows a
+    // "window ended" alert instead and the user presses R to refresh.
     let clockTimer = new Timer(Interval = 60_000)
     clockTimer.Tick.Add(fun _ ->
         if not refreshing then
             match lastSnapshot with
-            | Some snap ->
-                setLines (renderFor snap)
-                match Panel.sessionWindow snap with
-                | Some (_, windowEnd) when DateTime.Now >= windowEnd -> refresh ()
-                | _ -> ()
+            | Some snap -> setLines (renderFor snap)
             | None -> ())
     clockTimer.Start()
 
@@ -354,6 +359,13 @@ let run () =
         | Keys.I ->
             viewMode <- (match viewMode with Panel.Normal -> Panel.Info | Panel.Info -> Panel.Normal)
             rerender ()
+            e.SuppressKeyPress <- true
+        | Keys.D5 | Keys.NumPad5 ->
+            scheduleAutoRefreshIn (5 * 60 * 1000)
+            rerender ()
+            e.SuppressKeyPress <- true
+        | Keys.T ->
+            topMostItem.Checked <- not topMostItem.Checked
             e.SuppressKeyPress <- true
         | _ -> ())
 

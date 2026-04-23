@@ -57,6 +57,34 @@ let main argv =
             for r in snapshotToRows (parseFile f) do w.WriteLine r
         0
 
+    | [ "--login" ] ->
+        // Launch Chromium with the runtime profile dir but NO grabber
+        // extension so the window stays open for manual interactive login.
+        // Uses the same Chromium-discovery and profile-path logic the tray
+        // uses at scrape time — single source of truth for those paths.
+        let cfg = Scrape.defaults
+        if not (File.Exists cfg.ChromiumExe) then
+            System.Windows.Forms.MessageBox.Show(
+                sprintf "Chromium not found at %s\n\nSet CLAUDE_USAGE_CHROMIUM to override." cfg.ChromiumExe,
+                "claude-usage login",
+                System.Windows.Forms.MessageBoxButtons.OK,
+                System.Windows.Forms.MessageBoxIcon.Error) |> ignore
+            2
+        else
+            Directory.CreateDirectory cfg.ProfileDir |> ignore
+            let args =
+                String.concat " " [
+                    sprintf "--user-data-dir=\"%s\"" cfg.ProfileDir
+                    "--no-first-run"
+                    "--no-default-browser-check"
+                    "\"https://claude.ai/login\""
+                ]
+            let psi = System.Diagnostics.ProcessStartInfo(cfg.ChromiumExe, args)
+            psi.UseShellExecute <- false
+            use p = System.Diagnostics.Process.Start psi
+            p.WaitForExit()
+            p.ExitCode
+
     | _ ->
         // Default (no args, or anything unrecognised): launch the tray app.
         Tray.run ()

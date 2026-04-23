@@ -1,13 +1,9 @@
 @echo off
-REM One-shot manual-login launcher. Opens Chromium in the dedicated profile
-REM WITHOUT the grabber extension, so the window stays open while you log in.
-REM Log in, confirm you can reach https://claude.ai/settings/usage, then close the window normally.
+REM One-shot manual-login launcher. Delegates to claude-usage.exe --login,
+REM which uses the same Chromium-discovery and profile-path logic the tray
+REM uses at scrape time. Log in at claude.ai, confirm you can reach
+REM https://claude.ai/settings/usage, then close the browser window.
+REM
+REM Override Chromium discovery by setting CLAUDE_USAGE_CHROMIUM before running.
 
-set CHROMIUM="C:\Program Files\Chromium\Application\chrome.exe"
-set PROFILE_DIR=D:\projects\claude-usage\profile
-
-%CHROMIUM% ^
-  --user-data-dir="%PROFILE_DIR%" ^
-  --no-first-run ^
-  --no-default-browser-check ^
-  "https://claude.ai/login"
+"%~dp0dist\claude-usage.exe" --login

@@ -198,6 +198,15 @@ let private previousReset (now: DateTime) (day: DayOfWeek) (hr: int) (mn: int) :
     let cand = now.Date.AddDays(-float daysSince).AddHours(float hr).AddMinutes(float mn)
     if cand <= now then cand else cand.AddDays(-7.0)
 
+/// Next absolute reset time for a weekly bar, accepting either observed form:
+///   "Resets Mon 2:00 AM"    — pinned weekly wall-clock slot
+///   "Resets in 23 hr 3 min" — countdown used when the reset is <24h out
+/// Returns None for "(You haven't used X yet)" or unrecognised text.
+let private parseWeeklyResetAt (now: DateTime) (subtitle: string) : DateTime option =
+    match parseWeeklyReset subtitle with
+    | Some (d, hr, mn) -> Some ((previousReset now d hr mn).AddDays(7.0))
+    | None -> parseRemaining subtitle |> Option.map (fun r -> now + r)
+
 /// Round a computed reset time to the nearest :00 boundary.
 /// Claude's 5-h session resets always land on the top of the hour; the
 /// "Resets in X hr Y min" countdown is whole-minute, so capture+remaining
@@ -337,23 +346,42 @@ let render (snap: Snapshot) (nextRefreshAt: DateTime option) (lastError: (DateTi
         add (boxLine (rightAlign capText 2))
         add (blankLine ())
 
-        // >75% → red alert line suggesting Sonnet.
-        if s.Percent > 75 then
+        // Alerts: window-ended takes precedence — once the 5H boundary
+        // has passed, the captured percent is stale and the right action
+        // is to refresh, not to switch model. Otherwise warn at >75%.
+        let windowEnded =
+            sessionWindow snap
+            |> Option.exists (fun (_, endT) -> wallNow.LocalDateTime >= endT)
+        if windowEnded then
+            add (boxColoredLine Alert "  [!] 5H window ended, press R to reload for fresh data")
+            add (blankLine ())
+        elif s.Percent > 75 then
             let dp = displayPercent (sessionSegments * sessionCellsPerHour) s.Percent
             let alertText = sprintf "  [!] Session at %d%% — consider switching to Sonnet" dp
             add (boxColoredLine Alert alertText)
             add (blankLine ())
     | None -> ()
 
-    // --- Weekly (AM / SO / CD): each bar has its own reset, triangle, caption.
-    // Reset days differ between bars (user-specific), so we can't share a
-    // day-label row. Uninitialized bars ("You haven't used X yet") have no
-    // parseable reset — show no triangle and "(not yet used)" caption.
+    // --- Weekly (AM / SO / CD) ---
+    // The weekly reset cadence is a single per-subscription schedule — every
+    // weekly bar resets on the same day/hour. So even if one bar's subtitle
+    // is "You haven't used X yet" (no parseable reset of its own), we can
+    // inherit the reset anchor from any sibling bar that does have one, and
+    // still render the time triangle. The caption stays "(not yet used)"
+    // for those bars since 0% use is still true.
+    let weeklyRows =
+        [ "AM", weeklyAll; "SO", weeklySonnet; "CD", weeklyDesign ]
+        |> List.choose (fun (code, r) -> r |> Option.map (fun x -> code, x))
+
+    let weeklyFallbackResetAt =
+        weeklyRows |> List.tryPick (fun (_, b) -> b.Subtitle |> Option.bind (parseWeeklyResetAt now))
+
     let renderWeekly (code: string) (bar: UsageBar) =
+        let ownResetAt = bar.Subtitle |> Option.bind (parseWeeklyResetAt now)
+        let resetAt = ownResetAt |> Option.orElse weeklyFallbackResetAt
         let elapsedDays =
-            bar.Subtitle
-            |> Option.bind parseWeeklyReset
-            |> Option.map (fun (d, hr, mn) -> (now - previousReset now d hr mn).TotalDays)
+            resetAt
+            |> Option.map (fun ra -> max 0.0 (min 7.0 ((now - ra.AddDays(-7.0)).TotalDays)))
         match elapsedDays with
         | Some e ->
             let total = weeklySegments * weeklyCellsPerDay
@@ -366,15 +394,11 @@ let render (snap: Snapshot) (nextRefreshAt: DateTime option) (lastError: (DateTi
         | None -> ()
         add (boxBarLine code (weeklyBar bar.Percent))
         let capText =
-            match elapsedDays with
-            | Some e -> sprintf "%.1f / 7.0 D" e
-            | None -> "(not yet used)"
+            match ownResetAt, elapsedDays with
+            | Some _, Some e -> sprintf "%.1f / 7.0 D" e
+            | _ -> "(not yet used)"
         add (boxLine (rightAlign capText 2))
         add (blankLine ())
-
-    let weeklyRows =
-        [ "AM", weeklyAll; "SO", weeklySonnet; "CD", weeklyDesign ]
-        |> List.choose (fun (code, r) -> r |> Option.map (fun x -> code, x))
 
     if not (List.isEmpty weeklyRows) then
         add (boxLine "  Weekly")
@@ -383,7 +407,7 @@ let render (snap: Snapshot) (nextRefreshAt: DateTime option) (lastError: (DateTi
             renderWeekly code bar
 
     // Key hint row just above the bottom border, so the shortcuts are discoverable.
-    add (boxLine "  R reload  \u00B7  W browser  \u00B7  Q quit  \u00B7  Esc hide  \u00B7  I info")
+    add (boxLine "  R reload  \u00B7  W browser  \u00B7  5 refresh +5m  \u00B7  T pin  \u00B7  I info  \u00B7  Esc hide  \u00B7  Q quit")
     loadingRow loadingStage |> Option.iter add
     add (bottomBorder ())
 
@@ -454,7 +478,7 @@ let renderInfo (snap: Snapshot) (nextRefreshAt: DateTime option) (lastError: (Da
     addWrapped "  chromium: " "             " chromiumExe
     add (blankLine ())
 
-    add (boxLine "  R reload  \u00B7  W browser  \u00B7  Q quit  \u00B7  Esc hide  \u00B7  I normal")
+    add (boxLine "  R reload  \u00B7  W browser  \u00B7  5 refresh +5m  \u00B7  T pin  \u00B7  I normal  \u00B7  Esc hide  \u00B7  Q quit")
     loadingRow loadingStage |> Option.iter add
     add (bottomBorder ())
 
@@ -483,7 +507,7 @@ let renderSkeleton (nextRefreshAt: DateTime option) (lastError: (DateTimeOffset 
         add (boxLine (rightAlign "(awaiting data)" 2))
         add (blankLine ())
 
-    add (boxLine "  R reload  \u00B7  W browser  \u00B7  Q quit  \u00B7  Esc hide  \u00B7  I info")
+    add (boxLine "  R reload  \u00B7  W browser  \u00B7  5 refresh +5m  \u00B7  T pin  \u00B7  I info  \u00B7  Esc hide  \u00B7  Q quit")
     loadingRow loadingStage |> Option.iter add
     add (bottomBorder ())
 

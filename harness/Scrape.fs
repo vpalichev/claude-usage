@@ -15,17 +15,39 @@ type Config = {
     TimeoutMs: int
 }
 
+/// Locate a Chromium install. Checked in order: a user override via the
+/// CLAUDE_USAGE_CHROMIUM env var, then the standard per-machine install
+/// paths, then per-user. Returns the first existing file; if none exist,
+/// returns the most likely expected path so the run-time error message
+/// points at a canonical location ("not found at ...").
+let findChromium () : string =
+    let env = Environment.GetEnvironmentVariable "CLAUDE_USAGE_CHROMIUM"
+    let lad = Environment.GetFolderPath Environment.SpecialFolder.LocalApplicationData
+    let candidates = [
+        if not (String.IsNullOrWhiteSpace env) then yield env
+        yield @"C:\Program Files\Chromium\Application\chrome.exe"
+        yield @"C:\Program Files (x86)\Chromium\Application\chrome.exe"
+        yield Path.Combine(lad, "Chromium", "Application", "chrome.exe")
+    ]
+    candidates
+    |> List.tryFind File.Exists
+    |> Option.defaultValue (List.head candidates)
+
 let defaults : Config =
-    let root = @"D:\projects\claude-usage"
+    // All runtime paths resolve relative to the exe directory so the bundle
+    // (exe + extension + profile + logs) stays portable; no hard-coded repo
+    // path. Only the snapshot handoff lives in the user's Downloads folder
+    // because the Chromium extension writes via chrome.downloads.download.
+    let baseDir = AppContext.BaseDirectory.TrimEnd('\\', '/')
     let downloads =
         Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.UserProfile, "Downloads")
     {
-        ChromiumExe = @"C:\Program Files\Chromium\Application\chrome.exe"
-        ProfileDir  = Path.Combine(root, "profile")
-        ExtensionDir = Path.Combine(root, "extension")
+        ChromiumExe = findChromium ()
+        ProfileDir  = Path.Combine(baseDir, "profile")
+        ExtensionDir = Path.Combine(baseDir, "extension")
         TargetUrl   = "https://claude.ai/settings/usage"
         SnapshotDir = Path.Combine(downloads, "page-grabber", "claude.ai")
-        LogDir      = Path.Combine(root, "logs")
+        LogDir      = Path.Combine(baseDir, "logs")
         TimeoutMs   = 60_000
     }
 

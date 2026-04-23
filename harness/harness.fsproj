@@ -27,4 +27,14 @@
     <PackageReference Include="AngleSharp" Version="1.1.2" />
   </ItemGroup>
 
+  <!-- Copy the MV3 extension to the output directory alongside the exe so
+       the runtime's exe-relative path resolution finds it in both dev
+       (bin/...) and publish (dist/) layouts. -->
+  <ItemGroup>
+    <Content Include="..\extension\**\*">
+      <Link>extension\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

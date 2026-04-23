@@ -1,6 +1,7 @@
 # Build output
 **/bin/
 **/obj/
+dist/
 
 # Chromium profile (contains session cookies, large, personal)
 profile/

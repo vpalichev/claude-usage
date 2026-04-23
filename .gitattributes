@@ -1,0 +1,21 @@
+# Default: let Git auto-detect text vs binary, store text with LF in the repo,
+# check out with the platform's native line endings on Windows.
+* text=auto eol=lf
+
+# Windows batch files only make sense with CRLF — cmd.exe chokes on LF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Explicit text declarations for the file types in this repo.
+*.fs      text eol=lf
+*.fsproj  text eol=lf
+*.json    text eol=lf
+*.js      text eol=lf
+*.md      text eol=lf
+*.py      text eol=lf
+*.manifest text eol=lf
+
+# Binary assets (none currently, but prevents future surprises).
+*.png binary
+*.ico binary
+*.pdb binary
