@@ -133,10 +133,20 @@ let run (cfg: Config) (onProgress: string -> unit) : Outcome =
                 match parsed with
                 | Result.Error msg -> Failed (8, msg)
                 | Result.Ok snap ->
-                    let rows = snapshotToRows snap
-                    if List.isEmpty rows then
+                    // Schema canaries: catch silent breakage when the page is
+                    // redesigned and selectors keep matching the bar element
+                    // but miss the surrounding label/subtitle/caption text.
+                    let knownLabels = [ "Current session"; "All models"; "Sonnet only"; "Claude Design" ]
+                    if List.isEmpty snap.Bars then
                         Failed (7, "Snapshot loaded but contained no usage bars. You may be on a login screen — press W to open claude.ai and check.")
+                    elif snap.Bars |> List.exists (fun b -> System.String.IsNullOrWhiteSpace b.Label) then
+                        Failed (10, sprintf "Parsed %d bars but some had empty labels — page markup may have changed; selectors in Parser.fs are likely stale." snap.Bars.Length)
+                    elif not (snap.Bars |> List.exists (fun b -> List.contains b.Label knownLabels)) then
+                        Failed (11, "No bar matched the expected names (Current session / All models / Sonnet only / Claude Design). The page may have been redesigned.")
+                    elif snap.Plan.IsNone then
+                        Failed (12, "Plan name not found next to the 'Plan usage limits' heading — page markup may have changed; findPlan in Parser.fs may be stale.")
                     else
+                        let rows = snapshotToRows snap
                         let logPath = dailyLogPath cfg.LogDir snap
                         Io.appendRows logPath Csv.header rows
                         Ok snap

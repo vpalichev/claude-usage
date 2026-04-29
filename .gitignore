@@ -10,6 +10,13 @@ profile/
 logs/
 *.csv
 
+# Personal / local data — never committed.
+# Use the .local suffix on any file or directory that contains personal
+# data: captured pages from your logged-in account, scratch configs,
+# account-specific notes, etc.
+*.local/
+*.local.*
+
 # Browser-bot (separate repo)
 browser-bot/
 

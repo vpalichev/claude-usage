@@ -41,18 +41,15 @@ let private barFromProgressbar (pb: IElement) : UsageBar option =
     | _, None -> None
     | Some percent, Some row ->
         let label =
-            row.QuerySelector("p.text-text-100")
+            row.QuerySelector(".text-body.text-primary")
             |> tryText
             |> Option.defaultValue ""
         let subtitle =
-            row.QuerySelector("p.text-text-400:not(.text-right):not(.min-w-\\[5\\.5rem\\])")
+            row.QuerySelector(".text-footnote.text-secondary:not(.text-right):not(.min-w-\\[5\\.5rem\\])")
             |> tryText
             |> Option.filter (fun s -> not (s.EndsWith "used") && not (s.Contains " / "))
         let caption =
-            // The caption is the <p> that accompanies the bar itself — either
-            // "N% used" or "M / N" (for discrete counters). Find any descendant
-            // <p> whose text matches that shape.
-            row.QuerySelectorAll("p")
+            row.QuerySelectorAll(".text-footnote.text-secondary")
             |> Seq.map (fun p -> p.TextContent.Trim())
             |> Seq.tryFind (fun s ->
                 s.EndsWith("used") || (s.Contains(" / ") && s |> Seq.exists Char.IsDigit))
@@ -63,16 +60,27 @@ let private barFromProgressbar (pb: IElement) : UsageBar option =
             Caption = caption
         }
 
-/// Parse the plan-name span sitting next to the "Plan usage limits" heading.
+/// Parse the plan-name badge that sits next to the "Plan usage limits" heading.
+/// Two layouts seen in the wild: badge as a child <span> *inside* the heading
+/// (current), or as a sibling <span> in the heading's parent (older).
 let private findPlan (doc: IDocument) : string option =
-    doc.QuerySelectorAll("h2")
-    |> Seq.tryFind (fun h -> h.TextContent.Trim() = "Plan usage limits")
-    |> Option.bind (fun h ->
-        let parent = h.ParentElement
-        if isNull parent then None
-        else
-            parent.QuerySelector("span")
-            |> tryText)
+    let heading =
+        doc.QuerySelectorAll("h1, h2, h3, h4")
+        |> Seq.tryFind (fun h -> h.TextContent.Contains "Plan usage limits")
+    match heading with
+    | None -> None
+    | Some h ->
+        let inside =
+            h.QuerySelectorAll("span")
+            |> Seq.map (fun s -> s.TextContent.Trim())
+            |> Seq.tryFind (fun t ->
+                t <> "" && not (t.Contains "Plan usage limits"))
+        match inside with
+        | Some _ -> inside
+        | None ->
+            let parent = h.ParentElement
+            if isNull parent then None
+            else parent.QuerySelector("span") |> tryText
 
 /// Main entry point: parse a snapshot of claude.ai/settings/usage.
 let parseSnapshot (sourceFile: string) (capturedAt: DateTimeOffset option) (html: string) : Snapshot =
