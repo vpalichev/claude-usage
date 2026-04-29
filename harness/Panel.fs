@@ -153,6 +153,28 @@ let private boxColoredLine (color: LineColor) (content: string) : Line =
         seg Default (tail + boxV)
     ]
 
+/// Triangle marker row with an optional signed delta suffix. The triangle is
+/// always Good (green); the delta is Alert (red) when positive (over-pace),
+/// Good (green) when negative (headroom), Default (grey) at exactly 0.
+/// `delta = None` hides the suffix entirely (used at ≥90% usage).
+let private triangleDeltaLine (col: int) (delta: int option) (mark: string) : Line =
+    let triangleStr = String.replicate col " " + "▼"
+    let suffix, color =
+        match delta with
+        | None -> "", Default
+        | Some d ->
+            let c = if d > 0 then Alert elif d < 0 then Good else Default
+            sprintf " %s%+d%%" mark d, c
+    let content = triangleStr + suffix
+    let pad = max 0 (interior - content.Length)
+    let tail = String.replicate pad " "
+    segmentedLine [
+        seg Default boxV
+        seg Good triangleStr
+        seg color suffix
+        seg Default (tail + boxV)
+    ]
+
 let private rightAlign (text: string) (reserveAfter: int) : string =
     let leading = max 0 (interior - text.Length - reserveAfter)
     String.replicate leading " " + text + String.replicate reserveAfter " "
@@ -207,18 +229,12 @@ let private parseWeeklyResetAt (now: DateTime) (subtitle: string) : DateTime opt
     | Some (d, hr, mn) -> Some ((previousReset now d hr mn).AddDays(7.0))
     | None -> parseRemaining subtitle |> Option.map (fun r -> now + r)
 
-/// Round a computed reset time to the nearest :00 boundary.
-/// Claude's 5-h session resets always land on the top of the hour; the
-/// "Resets in X hr Y min" countdown is whole-minute, so capture+remaining
-/// is off by at most a minute, which hour-rounding absorbs.
-let private roundToHour (dt: DateTime) : DateTime =
-    let baseDt = DateTime(dt.Year, dt.Month, dt.Day, dt.Hour, 0, 0, dt.Kind)
-    if dt.Minute >= 30 then baseDt.AddHours(1.0) else baseDt
-
 /// Derive the current 5-hour session window (start, end) from a snapshot.
 /// Returns None if the "Current session" bar subtitle is missing or
 /// unparseable. Used by the tray clock tick to (a) advance the 5H triangle
 /// on wall-clock time and (b) trigger a fresh scrape once the window ends.
+/// The end time is taken as capture-time + parsed remaining; Claude no
+/// longer pins resets to the top of the hour, so we don't round.
 let sessionWindow (snap: Snapshot) : (DateTime * DateTime) option =
     snap.Bars
     |> List.tryFind (fun b -> b.Label = "Current session")
@@ -226,7 +242,7 @@ let sessionWindow (snap: Snapshot) : (DateTime * DateTime) option =
     |> Option.bind parseRemaining
     |> Option.map (fun remaining ->
         let capturedAt = snap.CapturedAt |> Option.defaultWith (fun () -> DateTimeOffset.UtcNow)
-        let endTime = roundToHour (capturedAt.LocalDateTime + remaining)
+        let endTime = capturedAt.LocalDateTime + remaining
         (endTime.AddHours(-5.0), endTime))
 
 let private agoText (elapsed: TimeSpan) : string =
@@ -335,7 +351,17 @@ let render (snap: Snapshot) (nextRefreshAt: DateTime option) (lastError: (DateTi
             let hourIdx = dataIdx / sessionCellsPerHour
             let cellInHour = dataIdx % sessionCellsPerHour
             let displayCol = hourIdx * (sessionCellsPerHour + 1) + cellInHour
-            add (boxColoredLine Good (String.replicate (barPrefix + displayCol) " " + "\u25BC"))
+            // Delta = usage% \u2212 time-elapsed%. Positive = burning faster than
+            // the clock; negative = headroom. Hidden at \u226590% (alert dominates).
+            // Tilde prefix when capture is >10 min old: usage% is frozen at
+            // scrape time while time% keeps moving, so the delta drifts.
+            let delta =
+                if s.Percent >= 90 then None
+                else
+                    let timePct = int (Math.Floor(fraction * 100.0))
+                    Some (s.Percent - timePct)
+            let mark = if (wallNow - capturedAt).TotalMinutes > 10.0 then "~" else ""
+            add (triangleDeltaLine (barPrefix + displayCol) delta mark)
         | None -> ()
         let projP = sessionProjectedPercent |> Option.defaultValue s.Percent
         add (boxBarLine "5H" (sessionBar s.Percent projP))
@@ -390,7 +416,15 @@ let render (snap: Snapshot) (nextRefreshAt: DateTime option) (lastError: (DateTi
             let dayIdx    = dataIdx / weeklyCellsPerDay
             let cellInDay = dataIdx % weeklyCellsPerDay
             let displayCol = dayIdx * (weeklyCellsPerDay + 1) + cellInDay
-            add (boxColoredLine Good (String.replicate (barPrefix + displayCol) " " + "\u25BC"))
+            // Weekly delta: same usage% \u2212 time% reading as the 5H row, but
+            // no staleness tilde \u2014 auto-refresh cadence (~30 min) is far
+            // shorter than the 7-day denominator, so the delta never drifts.
+            let delta =
+                if bar.Percent >= 90 then None
+                else
+                    let timePct = int (Math.Floor(e / 7.0 * 100.0))
+                    Some (bar.Percent - timePct)
+            add (triangleDeltaLine (barPrefix + displayCol) delta "")
         | None -> ()
         add (boxBarLine code (weeklyBar bar.Percent))
         let capText =
@@ -466,8 +500,27 @@ let renderInfo (snap: Snapshot) (nextRefreshAt: DateTime option) (lastError: (Da
     addWrapped "  Plan: " "        " plan
     add (blankLine ())
 
+    let liveSessionSub =
+        sessionWindow snap
+        |> Option.map (fun (_, endT) ->
+            let remaining = endT - DateTime.Now
+            let totalMin = max 0 (int (Math.Ceiling remaining.TotalMinutes))
+            let hr = totalMin / 60
+            let mn = totalMin % 60
+            let rel =
+                if totalMin <= 0 then "now"
+                elif hr > 0 && mn > 0 then sprintf "%d hr %d min" hr mn
+                elif hr > 0 then sprintf "%d hr" hr
+                else sprintf "%d min" mn
+            let endStr = (DateTimeOffset endT).ToString("HH:mm zzz", System.Globalization.CultureInfo.InvariantCulture)
+            sprintf "Resets in %s (\u2192 %s)" rel endStr)
+
     for b in snap.Bars do
-        let sub = b.Subtitle |> Option.map compact |> Option.defaultValue "\u2014"
+        let baseSub = b.Subtitle |> Option.map compact |> Option.defaultValue "\u2014"
+        let sub =
+            match b.Label, liveSessionSub with
+            | "Current session", Some live -> live
+            | _ -> baseSub
         let cap = b.Caption  |> Option.map compact |> Option.defaultValue "\u2014"
         let body = sprintf "%-18s %3d%%  %s  |  %s" b.Label b.Percent sub cap
         addWrapped "  " "      " body
